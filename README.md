@@ -16,4 +16,5 @@ This is a lightweight and performant web scraper designed to track product resto
 
 ## Additional Comments:
 - The discord link will be publically available soon!
+- Anticipating expanding to Skullpanda next
 - Thank you for your support and interest in this project, PopMart Friends! <3
