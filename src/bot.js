@@ -1,11 +1,14 @@
 const { Client, GatewayIntentBits } = require("discord.js");
 const { connectDB } = require("./database/database");
 const { checkProducts } = require("./scraper");
+const PageError = require('./errors/PageError');
 const { CHECK_INTERVAL, PROD_CHANNEL_ID, TEST_CHANNEL_ID } = require("./config");
 require("dotenv").config();
 
 const MAX_JITTER_MS = 10 * 1000;
 let mode = "prod"
+let consecutiveFailures = 0;
+let MAX_CONSECUTIVE_FAILURES = 5;
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
@@ -26,23 +29,49 @@ client.once("ready", async () => {
   
     let CHANNEL_ID = mode == "test" ? TEST_CHANNEL_ID : PROD_CHANNEL_ID;
   
-    // Start the infinite loop
+    // start the infinite loop
     monitor(CHANNEL_ID);
   });
   
 async function monitor(CHANNEL_ID) {
     while(true) {
+      try {
         const alertProducts = await checkProducts();
+        consecutiveFailures = 0; // reset after successful scrape
 
         for (const [product, changeType] of alertProducts) {
-            await sendAlert(product, changeType, CHANNEL_ID);
+          await sendAlert(product, changeType, CHANNEL_ID);
         }
-      
-        const jitter = Math.floor(Math.random() * MAX_JITTER_MS);
-        const nextInterval = CHECK_INTERVAL + jitter;
-        console.log(`Waiting ${nextInterval}ms before next scrape...\n`);
-        await new Promise(resolve => setTimeout(resolve, nextInterval));
-    }
+      } catch (e) {
+        consecutiveFailures++;
+
+        if (e instanceof PageError) {
+          console.log("❌ Page error:", e.message);
+        } else {
+          console.log("❌ Other error:", e.message);
+        }
+
+        // alert admin of bot death
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          await sendAlert({
+            name: "Monitor Error",
+            url: "https://www.popmart.com/us/",
+          }, "error", TEST_CHANNEL_ID);
+  
+          throw new Error("🚨 Too many consecutive failures. Exiting monitor.");
+        }
+  
+        const RETRY_DELAY = 10_000; // retry after 10s
+        console.log(`⏳ Retrying in ${RETRY_DELAY / 1000}s... (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        continue;
+      }
+    
+      const jitter = Math.floor(Math.random() * MAX_JITTER_MS);
+      const nextInterval = CHECK_INTERVAL + jitter;
+      console.log(`Waiting ${nextInterval}ms before next scrape...\n`);
+      await new Promise(resolve => setTimeout(resolve, nextInterval));
+  }
 }
 
 function formatPrice(rawPrice) {
@@ -70,6 +99,7 @@ async function sendAlert(product, changeType, CHANNEL_ID) {
           {
             title: product.name,
             url: product.url,
+            price: formatPrice(product.price)
           },
         ],
       });

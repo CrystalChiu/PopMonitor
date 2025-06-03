@@ -1,5 +1,6 @@
 const puppeteer = require('puppeteer');
 const Product = require("./database/models/Products");
+const PageError = require('./errors/PageError');
 
 // ENUM for changes that create an alert
 const ChangeTypeAlert = Object.freeze({
@@ -8,10 +9,11 @@ const ChangeTypeAlert = Object.freeze({
     OTHER: 2
   });
   
-let TOTAL_PAGES = 1
-let PAGE_WAIT_TIMEOUT = 60000
+let TOTAL_PAGES = 1;
 let alertProducts = []; // stores pairs of (product, changeTypes) that will become alerts
-let changedProductsMap = {}
+let changedProductsMap = {};
+let pageFails = 0;
+let firstPageRetries = 0;
 
 const buildBulkOps = (productsMap) => {
     return Object.values(productsMap).map((product) => ({
@@ -40,10 +42,12 @@ function slugifyTitle(title) {
   }
   
 async function checkProducts() {
-    console.log("Running new scrape...");
+    console.log("New scrape started!");
 
     // restart scraper state
     alertProducts.length = 0;
+    pageFails = 0;
+    firstPageRetries = 0;
 
     const browser = await puppeteer.launch({ headless: true });
     const page = await browser.newPage();
@@ -66,16 +70,16 @@ async function checkProducts() {
         }
         request.continue();
 
-        if (request.url().includes('/shop/v1/search') && request.method() === 'POST') {
-          try {
-            const postData = request.postData();
-            if (postData && postData.includes('"term":"LABUBU"')) {
-              console.log('Found LABUBU search request:', request.url());
-            }
-          } catch (e) {
-            console.log("Something went wrong during page request: ", e);
-          }
-        }
+        // if (request.url().includes('/shop/v1/search') && request.method() === 'POST') {
+        //   try {
+        //     const postData = request.postData();
+        //     if (postData && postData.includes('"term":"LABUBU"')) {
+        //       console.log('Found LABUBU search request:', request.url());
+        //     }
+        //   } catch (e) {
+        //     console.log("Something went wrong during page request: ", e);
+        //   }
+        // }
     });
 
     page.on('response', async (response) => {
@@ -93,7 +97,7 @@ async function checkProducts() {
                 Array.isArray(json?.data?.list)
               ) {
                 TOTAL_PAGES = Math.ceil(json.data.total / json.data.pageSize);
-                console.log("<DEBUG> Current page:", json.data.page);
+                // console.log("<DEBUG> Current page:", json.data.page);
           
                 json.data.list.forEach((item, index) => {
                     let name = item.title;
@@ -152,10 +156,40 @@ async function checkProducts() {
         }
     });
 
+    let PAGE_WAIT_TIMEOUT = 60000;
+    let PAGE_RETRY_DELAY = 30000;
+    let MAX_PAGE_FAILS = 3;
     let currentPage = 1;
     while(currentPage <= TOTAL_PAGES) {
         const searchUrl = `https://www.popmart.com/us/search/LABUBU?page=${currentPage}`;
-        await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: PAGE_WAIT_TIMEOUT });
+        console.log(`Scraping page ${currentPage}...`);
+
+        try {
+            await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: PAGE_WAIT_TIMEOUT });
+            pageFails = 0; // reset fail count on success
+        } catch (e) {
+            pageFails++;
+            console.error(`❌ Error on page ${currentPage}: ${e.message}`);
+
+            if (currentPage === 1) {
+                firstPageRetries++;
+                if (firstPageRetries >= MAX_PAGE_FAILS) {
+                    throw new PageError(`Failed to connect to the website after ${firstPageRetries} attempts. Aborting.`);
+                }
+    
+                console.log(`🔁 Retrying page 1 in ${PAGE_RETRY_DELAY}ms (attempt ${firstPageRetries}/${MAX_PAGE_FAILS})...`);
+                await new Promise(resolve => setTimeout(resolve, PAGE_RETRY_DELAY));
+                continue; // retry page 1
+            } else {
+                if (pageFails >= MAX_PAGE_FAILS) {
+                    console.log(`⚠️ Skipping page ${currentPage} after ${pageFails} failures.`);
+                    pageFails = 0;
+                } else {
+                    console.log(`🔁 Retrying page ${currentPage} (attempt ${pageFails}/${MAX_PAGE_FAILS})...`);
+                    continue; // retry same page
+                }
+            }
+        }
         currentPage++;
     }
 
@@ -163,7 +197,6 @@ async function checkProducts() {
 
     console.log("No. DB Updates Needed: ", changedProductsMap.length);
     if (Object.keys(changedProductsMap).length > 0) {
-        console.log("HERE");
         const bulkOps = buildBulkOps(changedProductsMap);
         const result = await Product.bulkWrite(bulkOps);
         console.log("Bulk write result:", result);
