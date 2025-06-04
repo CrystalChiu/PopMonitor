@@ -25,7 +25,8 @@ client.once("ready", async () => {
     } else {
       sendStartupStatusAlert();
     }
-    console.log(`*** App running in ${mode} ***`);
+    console.log(`[INFO] App running in ${mode}`);
+    console.log("────────────────────────────────────────────");
   
     let CHANNEL_ID = mode == "test" ? TEST_CHANNEL_ID : PROD_CHANNEL_ID;
   
@@ -39,8 +40,8 @@ async function monitor(CHANNEL_ID) {
         const alertProducts = await checkProducts();
         consecutiveFailures = 0; // reset after successful scrape
 
-        for (const [product, changeType] of alertProducts) {
-          await sendAlert(product, changeType, CHANNEL_ID);
+        for (const [product, changeType, imgUrl] of alertProducts) {
+          await sendAlert(product, changeType, imgUrl, CHANNEL_ID);
         }
       } catch (e) {
         consecutiveFailures++;
@@ -63,7 +64,7 @@ async function monitor(CHANNEL_ID) {
   
         const RETRY_DELAY = 10_000; // retry after 10s
         console.log(`⏳ Retrying in ${RETRY_DELAY / 1000}s... (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})`);
-        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
         continue;
       }
     
@@ -81,7 +82,7 @@ function formatPrice(rawPrice) {
     return `$${dollars}.${cents}`;
 }
 
-async function sendAlert(product, changeType, CHANNEL_ID) {
+async function sendAlert(product, changeType, imgUrl, CHANNEL_ID) {
     try {
       const channel = await client.channels.fetch(CHANNEL_ID);
       if (!channel) {
@@ -99,7 +100,20 @@ async function sendAlert(product, changeType, CHANNEL_ID) {
           {
             title: product.name,
             url: product.url,
-            price: formatPrice(product.price)
+            image: {
+              url: imgUrl,
+            },
+            fields: [
+              {
+                name: "Price",
+                value: formatPrice(product.price),
+                inline: true,
+              },
+            ],
+            footer: {
+              text: "PopMonitor",
+            },
+            timestamp: new Date(),
           },
         ],
       });

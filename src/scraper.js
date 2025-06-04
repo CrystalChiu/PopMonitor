@@ -18,13 +18,14 @@ let firstPageRetries = 0;
 const buildBulkOps = (productsMap) => {
     return Object.values(productsMap).map((product) => ({
       updateOne: {
-        filter: { name: product.name },
+        filter: { productId: product.productId },
         update: {
           $set: {
+            name: product.name,
             price: product.price,
             url: product.url,
             in_stock: product.in_stock,
-            img_url: product.img_url ?? null, // include if available
+            // img_url: product.img_url ?? null, // include if available
           },
         },
         upsert: true,
@@ -42,18 +43,20 @@ function slugifyTitle(title) {
   }
   
 async function checkProducts() {
-    console.log("New scrape started!");
+    console.log("New scrape session started — " + new Date().toLocaleString());
 
     // restart scraper state
     alertProducts.length = 0;
     pageFails = 0;
     firstPageRetries = 0;
+    changedProductsMap = {};
 
     const browser = await puppeteer.launch({ headless: true });
     const page = await browser.newPage();
     const allProducts = await Product.find(); // retrieve the current product stock state
+    console.log(`Found ${allProducts.length} existing products in the database`);
     const allProductsMap = allProducts.reduce((acc, product) => {
-        acc[product.name] = product;
+        acc[product.productId] = product;
         return acc;
     }, {});
 
@@ -101,22 +104,22 @@ async function checkProducts() {
           
                 json.data.list.forEach((item, index) => {
                     let name = item.title;
-                    let product = allProductsMap[name];
+                    let rawPrice = item.skus[0].price;
+                    let imgUrl = item.bannerImages[0];
+                    let productId = item.id;
+                    let product = allProductsMap[productId];
                     let inStock = item.isAvailable;
                     // let subTitle = item.subTitle; // (LABUBU, SKULLPANDA) use for scaling up to include more lines
 
-                    let rawPrice = item.skus[0].price;
-                    // let formattedPrice = formatPrice(rawPrice);
-
-                    let productId = item.id;
                     let productSlug = slugifyTitle(name);
                     let productUrl = `https://www.popmart.com/us/products/${productId}/${productSlug}`;
 
                     // func to update product fields and track changes
                     const updateField = (field, newValue) => {
                         if (product[field] !== newValue) {
+                            console.log(`Updated ${field} for ${name} from ${product[field]} to ${newValue}`);
                             product[field] = newValue;
-                            changedProductsMap[product.name] = product;
+                            changedProductsMap[product.productId] = product;
                         }
                     };
 
@@ -125,19 +128,20 @@ async function checkProducts() {
                         if (!product) {
                             // new item identified
                             let newProduct = new Product({
+                                productId,
                                 name,
                                 price: rawPrice,
                                 in_stock: inStock,
                                 url: productUrl,
                             });
                         
-                            alertProducts.push([newProduct, ChangeTypeAlert.NEW_ITEM])
-                            changedProductsMap[name] = newProduct;
+                            alertProducts.push([newProduct, ChangeTypeAlert.NEW_ITEM, imgUrl])
+                            changedProductsMap[productId] = newProduct;
                             console.log("Added new product:", name);
                         } else {
                             // restock detected
                             if (inStock && !product.in_stock) {
-                                alertProducts.push([product, ChangeTypeAlert.RESTOCK]);
+                                alertProducts.push([product, ChangeTypeAlert.RESTOCK, imgUrl]);
                                 updateField("in_stock", inStock);
                                 console.log("Restock detected: ", name);
                             }
@@ -156,13 +160,14 @@ async function checkProducts() {
         }
     });
 
-    let PAGE_WAIT_TIMEOUT = 60000;
+    let PAGE_WAIT_TIMEOUT = 100000;
     let PAGE_RETRY_DELAY = 30000;
     let MAX_PAGE_FAILS = 3;
     let currentPage = 1;
+    console.log("Scraping product listings:");
     while(currentPage <= TOTAL_PAGES) {
         const searchUrl = `https://www.popmart.com/us/search/LABUBU?page=${currentPage}`;
-        console.log(`Scraping page ${currentPage}...`);
+        console.log(`→ Scraping page ${currentPage}...`);
 
         try {
             await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: PAGE_WAIT_TIMEOUT });
@@ -195,7 +200,7 @@ async function checkProducts() {
 
     browser.close();
 
-    console.log("No. DB Updates Needed: ", changedProductsMap.length);
+    console.log("No. DB Updates Needed: ", Object.keys(changedProductsMap).length);
     if (Object.keys(changedProductsMap).length > 0) {
         const bulkOps = buildBulkOps(changedProductsMap);
         const result = await Product.bulkWrite(bulkOps);
