@@ -9,6 +9,7 @@ const productSchema = new mongoose.Schema({
     price: { type: Number, required: true },
     in_stock: { type: Boolean, required: true },
     url: { type: String, required: true },
+    is_priority: { type: Boolean, required: true, default: false} // i will update this manually in db for now
   }, { timestamps: true });
 
 const Product = mongoose.model("Product", productSchema);

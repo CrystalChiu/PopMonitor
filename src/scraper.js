@@ -10,10 +10,12 @@ const ChangeTypeAlert = Object.freeze({
   });
   
 let TOTAL_PAGES = 1;
+let allProductsMap = {};
 let alertProducts = []; // stores pairs of (product, changeTypes) that will become alerts
 let changedProductsMap = {};
 let pageFails = 0;
 let firstPageRetries = 0;
+let cache = false;
 
 const buildBulkOps = (productsMap) => {
     return Object.values(productsMap).map((product) => ({
@@ -25,7 +27,6 @@ const buildBulkOps = (productsMap) => {
             price: product.price,
             url: product.url,
             in_stock: product.in_stock,
-            // img_url: product.img_url ?? null, // include if available
           },
         },
         upsert: true,
@@ -41,8 +42,8 @@ function slugifyTitle(title) {
       .trim()
       .replace(/\s+/g, '-');          // replace spaces with dashes
   }
-  
-async function checkProducts() {
+
+function scraperInit() {
     console.log("New scrape session started — " + new Date().toLocaleString());
 
     // restart scraper state
@@ -50,15 +51,48 @@ async function checkProducts() {
     pageFails = 0;
     firstPageRetries = 0;
     changedProductsMap = {};
+}
+
+async function checkHotProducts() {
+    scraperInit();
 
     const browser = await puppeteer.launch({ headless: true });
     const page = await browser.newPage();
-    const allProducts = await Product.find(); // retrieve the current product stock state
-    console.log(`Found ${allProducts.length} existing products in the database`);
-    const allProductsMap = allProducts.reduce((acc, product) => {
-        acc[product.productId] = product;
-        return acc;
-    }, {});
+
+    const priorityProducts = await Products.find({ is_priority:true })
+    const urls = priorityProducts.reduce((list, product) => {
+        list.append(product.url);
+        return list;
+    });
+
+    // TODO: add more error handling
+    urls.forEach(async (url, index) => {
+        console.log("Visiting: ", url);
+        try {
+            await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_WAIT_TIMEOUT });
+
+            // TODO: check stock status and compare
+        } catch (e) {
+            console.error(`❌ Error on page ${currentPage}: ${e.message}`);
+        }
+    });
+}
+  
+async function checkProducts() {
+    scraperInit();
+
+    const browser = await puppeteer.launch({ headless: true });
+    const page = await browser.newPage();
+
+    // TODO: add cache logic
+    if(!cache) {
+        const allProducts = await Product.find(); // retrieve the current product stock state
+        console.log(`Found ${allProducts.length} existing products in the database`);
+        allProductsMap = allProducts.reduce((acc, product) => {
+            acc[product.productId] = product;
+            return acc;
+        }, {});
+    }
 
     await page.setRequestInterception(true);
 
@@ -72,17 +106,6 @@ async function checkProducts() {
             return request.abort();
         }
         request.continue();
-
-        // if (request.url().includes('/shop/v1/search') && request.method() === 'POST') {
-        //   try {
-        //     const postData = request.postData();
-        //     if (postData && postData.includes('"term":"LABUBU"')) {
-        //       console.log('Found LABUBU search request:', request.url());
-        //     }
-        //   } catch (e) {
-        //     console.log("Something went wrong during page request: ", e);
-        //   }
-        // }
     });
 
     page.on('response', async (response) => {
@@ -100,7 +123,6 @@ async function checkProducts() {
                 Array.isArray(json?.data?.list)
               ) {
                 TOTAL_PAGES = Math.ceil(json.data.total / json.data.pageSize);
-                // console.log("<DEBUG> Current page:", json.data.page);
           
                 json.data.list.forEach((item, index) => {
                     let name = item.title;
@@ -205,9 +227,13 @@ async function checkProducts() {
         const bulkOps = buildBulkOps(changedProductsMap);
         const result = await Product.bulkWrite(bulkOps);
         console.log("Bulk write result:", result);
+        
+        cache = false; // changes made, cache outdated
+    } else {
+        cache = true; // no changes made, keep cache
     }
     
     return alertProducts;
 } 
 
-module.exports = { checkProducts };
+module.exports = { checkProducts, checkHotProducts };
