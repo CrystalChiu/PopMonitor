@@ -131,8 +131,13 @@ async function sendAlert(product, changeType, imgUrl, CHANNEL_ID) {
               {
                 name: "Price",
                 value: formatPrice(product.price),
-                inline: true,
+                inline: true
               },
+              {
+                name: "Stock",
+                value: product.in_stock ? "In Stock" : "Out of Stock",
+                inline: true
+              }
             ],
             footer: {
               text: "PopMonitor",

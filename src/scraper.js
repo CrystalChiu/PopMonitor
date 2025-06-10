@@ -54,28 +54,56 @@ function scraperInit() {
 }
 
 async function checkHotProducts() {
+    let PAGE_WAIT_TIMEOUT = 100000;
     scraperInit();
-
+  
     const browser = await puppeteer.launch({ headless: true });
     const page = await browser.newPage();
-
-    const priorityProducts = await Products.find({ is_priority:true })
-    const urls = priorityProducts.reduce((list, product) => {
-        list.append(product.url);
-        return list;
-    });
-
-    // TODO: add more error handling
-    urls.forEach(async (url, index) => {
-        console.log("Visiting: ", url);
-        try {
-            await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_WAIT_TIMEOUT });
-
-            // TODO: check stock status and compare
-        } catch (e) {
-            console.error(`❌ Error on page ${currentPage}: ${e.message}`);
+  
+    const priorityProducts = await Products.find({ is_priority: true });
+  
+    for (const product of priorityProducts) {
+      let url = product.url;
+      console.log("Visiting:", url);
+  
+      try {
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_WAIT_TIMEOUT });
+  
+        const data = await page.evaluate(() => {
+          try {
+            return window.__INITIAL_STATE__.product.productDetailInfo;
+          } catch (e) {
+            return null;
+          }
+        });
+  
+        if (!data || !data.skus || !data.skus[0]) {
+          console.warn(`⚠️ Couldn't extract data for: ${product.name}`);
+          continue;
         }
-    });
+  
+        const wasInStock = product.in_stock;
+        const isInStock = data.skus[0].stock.onlineStock > 0;
+        const productImgUrl = data.skus[0].mainImage;
+  
+        if (wasInStock === false && isInStock === true) {
+          alertProducts.push([product, ChangeTypeAlert.RESTOCK, productImgUrl]);
+          console.log(`🔔 Restock detected: ${product.name}`);
+        }
+  
+        // in this case we will update DB immediately
+        if (wasInStock !== isInStock) {
+          product.in_stock = isInStock;
+          await product.save();
+        }
+  
+      } catch (e) {
+        console.error(`❌ Error visiting ${url}: ${e.message}`);
+      }
+    }
+  
+    await browser.close();
+    return alertProducts;
 }
   
 async function checkProducts() {
@@ -130,7 +158,7 @@ async function checkProducts() {
                     let imgUrl = item.bannerImages[0];
                     let productId = item.id;
                     let product = allProductsMap[productId];
-                    let inStock = item.isAvailable;
+                    let inStock = item.skus[0].stock.onlineStock == 0 ? false : true;
                     // let subTitle = item.subTitle; // (LABUBU, SKULLPANDA) use for scaling up to include more lines
 
                     let productSlug = slugifyTitle(name);
