@@ -2,6 +2,7 @@ const { Client, GatewayIntentBits } = require("discord.js");
 const { connectDB } = require("./database/database");
 const { ChangeTypeAlert, checkProducts, checkHotProducts } = require("./scraper");
 const PageError = require('./errors/PageError');
+const HighTrafficError = require('./errors/HighTrafficError');
 const { 
   HOT_DAYS,
   HOT_HOURS_RANGE,
@@ -74,6 +75,8 @@ async function monitor(CHANNEL_ID) {
       } else if (e instanceof HighTrafficError) {
         // probable restock in progress, warn users and sleep
         await sendTrafficAlert(CHANNEL_ID);
+        const sleepTime = 300000; // 5 min
+        await new Promise(resolve => setTimeout(resolve, sleepTime));
       } else {
         consecutiveFailures++;
         console.log("❌ Other error:", e.message);
@@ -127,6 +130,9 @@ async function sendAlert(product, changeType, imgUrl, CHANNEL_ID) {
           break;
         case ChangeTypeAlert.SOLD_OUT:
           messageContent = `📦 **${product.name}** has been SOLD OUT`
+          break;
+        case ChangeTypeAlert.OTHER:
+          messageContent = `🔎 **${product.name}** has been MODIFIED on the PopMart Site!`
           break;
       }
   

@@ -234,6 +234,10 @@ async function checkProducts() {
                             console.log(`Updated ${field} for ${name} from ${product[field]} to ${newValue}`);
                             product[field] = newValue;
                             changedProductsMap[product.product_id] = product;
+
+                            if(field == "price" || field == "url") {
+                                alertProducts.push(product, ChangeTypeAlert.OTHER, imgUrl);
+                            }
                         }
                     };
 
