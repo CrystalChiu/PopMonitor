@@ -7,7 +7,11 @@ This is a lightweight and performant web scraper designed to track product resto
 
 ## Features
 
-- Efficiently scrapes all product listings across paginated search results
+- Intercepts popmart network GET requests to efficiently retrieve product data
+  - Uses the search API during low-traffic periods
+  - Targets specific product pages during high-traffic/hot periods
+- Throttles crawl frequency and limits checks to marked hot products during likely restock windows to reduce load and improve speed
+- Detects high network traffic
 - Detects new products, price changes, and restocked inventory
 - Writes bulk updates to MongoDB when changes are detected
 - Sends Discord alerts for new or changed products
