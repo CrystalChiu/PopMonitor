@@ -11,7 +11,7 @@ This is a lightweight and performant web scraper designed to track product resto
   - Uses the search API during low-traffic periods
   - Targets specific product pages during high-traffic/hot periods
 - Throttles crawl frequency and limits checks to marked hot products during likely restock windows to reduce load and improve speed
-- Detects high network traffic
+- Detects and alerts of high network traffic to notify users of potential restocks if website is unresponsive
 - Detects new products, price changes, and restocked inventory
 - Writes bulk updates to MongoDB when changes are detected
 - Sends Discord alerts for new or changed products
