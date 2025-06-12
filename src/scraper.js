@@ -1,13 +1,15 @@
 const puppeteer = require('puppeteer');
 const Product = require("./database/models/Products");
 const PageError = require('./errors/PageError');
+const HighTrafficError = require('./errors/HighTrafficError');
 
 // ENUM for changes that create an alert
 const ChangeTypeAlert = Object.freeze({
     RESTOCK: 0,
     NEW_ITEM: 1,
-    OTHER: 2
-  });
+    OTHER: 2,
+    SOLD_OUT: 3,
+});
   
 let TOTAL_PAGES = 1;
 let allProductsMap = {};
@@ -20,7 +22,7 @@ let cache = false;
 const buildBulkOps = (productsMap) => {
     return Object.values(productsMap).map((product) => ({
       updateOne: {
-        filter: { productId: product.productId },
+        filter: { product_id: product.product_id },
         update: {
           $set: {
             name: product.name,
@@ -53,56 +55,117 @@ function scraperInit() {
     changedProductsMap = {};
 }
 
+async function updateDb() {
+    console.log("No. DB Updates Needed: ", Object.keys(changedProductsMap).length);
+    if (Object.keys(changedProductsMap).length > 0) {
+        const bulkOps = buildBulkOps(changedProductsMap);
+        const result = await Product.bulkWrite(bulkOps);
+        console.log("Bulk write result:", result);
+        
+        cache = false; // changes made, cache outdated
+    } else {
+        cache = true; // no changes made, keep cache
+    }
+}
+
 async function checkHotProducts() {
     let PAGE_WAIT_TIMEOUT = 100000;
     scraperInit();
   
     const browser = await puppeteer.launch({ headless: true });
     const page = await browser.newPage();
+
+    await page.setRequestInterception(true);
+
+    // block unnecessary resources for speed
+    page.on("request", (req) => {
+        const resourceType = req.resourceType();
+        if (["image", "stylesheet", "font", "media"].includes(resourceType)) {
+        return req.abort();
+        }
+        req.continue();
+    });
+
+    let interceptedData = null;
+
+    page.on("response", async (response) => {
+        const url = response.url();
+        const contentType = response.headers()["content-type"] || "";
+    
+        if (contentType.includes("application/json") && url.includes("productDetails")) {
+          try {
+            const json = await response.json();
+            if (json?.code === "OK" && 
+                json?.data?.skus && 
+                url.includes('productDetails')
+            ) {
+                interceptedData = json.data;
+            }
+          } catch (e) {
+            console.error(`Failed to parse productDetails JSON from ${url}: ${e.message}`);
+          }
+        }
+    });
   
-    const priorityProducts = await Products.find({ is_priority: true });
+    const priorityProducts = await Product.find({ is_priority: true });
+    let failedCount = 0;
+    const FAIL_THRESHOLD = 0.5; // 50% failure rate
+    const total = priorityProducts.length;
   
     for (const product of priorityProducts) {
-      let url = product.url;
-      console.log("Visiting:", url);
+        interceptedData = null; // reset data for each product
+        let url = product.url;
+        console.log("Visiting:", url);
   
-      try {
-        await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_WAIT_TIMEOUT });
-  
-        const data = await page.evaluate(() => {
-          try {
-            return window.__INITIAL_STATE__.product.productDetailInfo;
-          } catch (e) {
-            return null;
-          }
-        });
-  
-        if (!data || !data.skus || !data.skus[0]) {
-          console.warn(`⚠️ Couldn't extract data for: ${product.name}`);
-          continue;
+        try {
+            await page.goto(url, { waitUntil: "networkidle2", timeout: PAGE_WAIT_TIMEOUT });
+            
+            const data = interceptedData;
+    
+            if (!data) {
+                console.warn(`⚠️ Couldn't extract data for: ${product.name}`);
+                failedCount++;
+                continue;
+            }
+
+            const wasInStock = product.in_stock;
+            const isInStock = data.skus[0].stock.onlineStock > 0;
+            const productImgUrl = data.skus[0].mainImage;
+
+            if (wasInStock === false && isInStock === true) {
+                product.in_stock = isInStock;
+                alertProducts.push([product, ChangeTypeAlert.RESTOCK, productImgUrl]);
+                changedProductsMap[product.product_id] = product;
+                console.log(`Restock detected: ${product.name}`);
+            } else if(wasInStock === true && isInStock === false) {
+                product.in_stock = isInStock;
+                alertProducts.push([product, ChangeTypeAlert.SOLD_OUT, productImgUrl]);
+                changedProductsMap[product.product_id] = product;
+                console.log(`Item just sold out: ${product.name}`);
+            }
+
+            if (failedCount / total > failThreshold) {
+                throw new HighTrafficError("🚨 High traffic or site failure detected");
+            }
+        } catch (e) {
+            if(e instanceof HighTrafficError) {
+                throw e;
+            }
+
+            console.error(`❌ Error visiting ${url}: ${e.message}`);
+            failedCount++;
+
+            if (failedCount / total > failThreshold) {
+                throw new HighTrafficError("🚨 High traffic or site failure detected");
+            }
+
+            continue;
         }
-  
-        const wasInStock = product.in_stock;
-        const isInStock = data.skus[0].stock.onlineStock > 0;
-        const productImgUrl = data.skus[0].mainImage;
-  
-        if (wasInStock === false && isInStock === true) {
-          alertProducts.push([product, ChangeTypeAlert.RESTOCK, productImgUrl]);
-          console.log(`🔔 Restock detected: ${product.name}`);
-        }
-  
-        // in this case we will update DB immediately
-        if (wasInStock !== isInStock) {
-          product.in_stock = isInStock;
-          await product.save();
-        }
-  
-      } catch (e) {
-        console.error(`❌ Error visiting ${url}: ${e.message}`);
-      }
     }
   
     await browser.close();
+    await updateDb();
+
     return alertProducts;
 }
   
@@ -117,7 +180,7 @@ async function checkProducts() {
         const allProducts = await Product.find(); // retrieve the current product stock state
         console.log(`Found ${allProducts.length} existing products in the database`);
         allProductsMap = allProducts.reduce((acc, product) => {
-            acc[product.productId] = product;
+            acc[product.product_id] = product;
             return acc;
         }, {});
     }
@@ -146,10 +209,11 @@ async function checkProducts() {
             const json = await response.json();
     
             if (
+                url.includes('search') &&
                 json?.code === 'OK' &&
                 json?.data?.total &&
                 Array.isArray(json?.data?.list)
-              ) {
+            ) {
                 TOTAL_PAGES = Math.ceil(json.data.total / json.data.pageSize);
           
                 json.data.list.forEach((item, index) => {
@@ -169,7 +233,7 @@ async function checkProducts() {
                         if (product[field] !== newValue) {
                             console.log(`Updated ${field} for ${name} from ${product[field]} to ${newValue}`);
                             product[field] = newValue;
-                            changedProductsMap[product.productId] = product;
+                            changedProductsMap[product.product_id] = product;
                         }
                     };
 
@@ -178,7 +242,7 @@ async function checkProducts() {
                         if (!product) {
                             // new item identified
                             let newProduct = new Product({
-                                productId,
+                                product_id: productId,
                                 name,
                                 price: rawPrice,
                                 in_stock: inStock,
@@ -249,19 +313,9 @@ async function checkProducts() {
     }
 
     browser.close();
+    await updateDb();
 
-    console.log("No. DB Updates Needed: ", Object.keys(changedProductsMap).length);
-    if (Object.keys(changedProductsMap).length > 0) {
-        const bulkOps = buildBulkOps(changedProductsMap);
-        const result = await Product.bulkWrite(bulkOps);
-        console.log("Bulk write result:", result);
-        
-        cache = false; // changes made, cache outdated
-    } else {
-        cache = true; // no changes made, keep cache
-    }
-    
     return alertProducts;
 } 
 
-module.exports = { checkProducts, checkHotProducts };
+module.exports = { ChangeTypeAlert, checkProducts, checkHotProducts };

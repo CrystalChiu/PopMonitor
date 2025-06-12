@@ -1,6 +1,6 @@
 const { Client, GatewayIntentBits } = require("discord.js");
 const { connectDB } = require("./database/database");
-const { checkProducts } = require("./scraper");
+const { ChangeTypeAlert, checkProducts, checkHotProducts } = require("./scraper");
 const PageError = require('./errors/PageError');
 const { 
   HOT_DAYS,
@@ -67,12 +67,15 @@ async function monitor(CHANNEL_ID) {
         await sendAlert(product, changeType, imgUrl, CHANNEL_ID);
       }
     } catch (e) {
-      consecutiveFailures++;
-
       // log error
       if (e instanceof PageError) {
+        consecutiveFailures++;
         console.log("❌ Page error:", e.message);
+      } else if (e instanceof HighTrafficError) {
+        // probable restock in progress, warn users and sleep
+        await sendTrafficAlert(CHANNEL_ID);
       } else {
+        consecutiveFailures++;
         console.log("❌ Other error:", e.message);
       }
 
@@ -114,9 +117,18 @@ async function sendAlert(product, changeType, imgUrl, CHANNEL_ID) {
         return;
       }
   
-      const messageContent = changeType === 0 
-        ? `🔥 **${product.name}** is back in stock!`
-        : `‼️ New product: **${product.name}**`;
+      let messageContent = "";
+      switch(changeType) {
+        case ChangeTypeAlert.RESTOCK:
+          messageContent = `🔥 **${product.name}** is back in stock!`
+          break;
+        case ChangeTypeAlert.NEW_ITEM:
+          messageContent = `‼️ New product: **${product.name}**`
+          break;
+        case ChangeTypeAlert.SOLD_OUT:
+          messageContent = `📦 **${product.name}** has been SOLD OUT`
+          break;
+      }
   
       await channel.send({
         content: messageContent,
@@ -148,8 +160,8 @@ async function sendAlert(product, changeType, imgUrl, CHANNEL_ID) {
       });
   
       console.log("✅ Alert sent for: ", product.name);
-    } catch (err) {
-      console.error("❌ Error sending alert:", err.message);
+    } catch (e) {
+      console.error("❌ Error sending alert:", e.message);
     }
 }
 
@@ -164,7 +176,37 @@ async function sendStartupStatusAlert() {
       await channel.send({
         content: "Bot now running ✅"
       });
-    } catch (err) {
-      console.error("❌ Error sending startup alert:", err.message);
+    } catch (e) {
+      console.error("❌ Error sending startup alert:", e.message);
     }
   }
+
+async function sendTrafficAlert(CHANNEL_ID) {
+  try {
+    const channel = await client.channels.fetch(CHANNEL_ID)
+    if (!channel) {
+      console.error("❌ Channel not found!");
+      return;
+    }
+
+    await channel.send({
+      content: "",
+      embeds: [
+        {
+          title: "❕ High Traffic Alert ❕",
+          description: `Pop Mart is experiencing unusually high traffic.\n Potential Restock! Check the site manually.`,
+          color: 0xffcc00, // yellaur
+          footer: {
+            text: "PopMonitor",
+          },
+          timestamp: new Date(),
+        },
+      ],
+    });
+
+    console.log("✅ High traffic alert sent");
+
+  } catch (e) {
+    console.error("❌ Error sending traffic alert:", e.message)
+  }
+}

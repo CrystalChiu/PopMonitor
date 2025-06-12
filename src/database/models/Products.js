@@ -4,7 +4,7 @@ const mongoose = require("mongoose");
 // char_id: { type: mongoose.Schema.Types.ObjectId, ref: "Character" },
 // img_url: { type: String, required: false },
 const productSchema = new mongoose.Schema({
-    productId: { type: Number, required: true, unique: true },
+    product_id: { type: Number, required: true, unique: true },
     name: { type: String, required: true, unique: false },
     price: { type: Number, required: true },
     in_stock: { type: Boolean, required: true },
