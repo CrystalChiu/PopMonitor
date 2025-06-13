@@ -10,8 +10,9 @@ const ChangeTypeAlert = Object.freeze({
     OTHER: 2,
     SOLD_OUT: 3,
 });
-  
-let TOTAL_PAGES = 1;
+
+const FAIL_THRESHOLD = 0.5; // 50% failure rate
+let totalPages = 1;
 let allProductsMap = {};
 let alertProducts = []; // stores pairs of (product, changeTypes) that will become alerts
 let changedProductsMap = {};
@@ -109,7 +110,6 @@ async function checkHotProducts() {
   
     const priorityProducts = await Product.find({ is_priority: true });
     let failedCount = 0;
-    const FAIL_THRESHOLD = 0.5; // 50% failure rate
     const total = priorityProducts.length;
   
     for (const product of priorityProducts) {
@@ -144,7 +144,7 @@ async function checkHotProducts() {
                 console.log(`Item just sold out: ${product.name}`);
             }
 
-            if (failedCount / total > failThreshold) {
+            if (failedCount / total > FAIL_THRESHOLD) {
                 throw new HighTrafficError("🚨 High traffic or site failure detected");
             }
         } catch (e) {
@@ -155,7 +155,7 @@ async function checkHotProducts() {
             console.error(`❌ Error visiting ${url}: ${e.message}`);
             failedCount++;
 
-            if (failedCount / total > failThreshold) {
+            if (failedCount / total > FAIL_THRESHOLD) {
                 throw new HighTrafficError("🚨 High traffic or site failure detected");
             }
 
@@ -174,6 +174,7 @@ async function checkProducts() {
 
     const browser = await puppeteer.launch({ headless: true });
     const page = await browser.newPage();
+    let failedLoads = 0;
 
     // TODO: add cache logic
     if(!cache) {
@@ -214,7 +215,7 @@ async function checkProducts() {
                 json?.data?.total &&
                 Array.isArray(json?.data?.list)
             ) {
-                TOTAL_PAGES = Math.ceil(json.data.total / json.data.pageSize);
+                totalPages = Math.ceil(json.data.total / json.data.pageSize);
           
                 json.data.list.forEach((item, index) => {
                     let name = item.title;
@@ -278,18 +279,18 @@ async function checkProducts() {
         }
     });
 
-    let PAGE_WAIT_TIMEOUT = 100000;
-    let PAGE_RETRY_DELAY = 30000;
-    let MAX_PAGE_FAILS = 3;
+    const PAGE_WAIT_TIMEOUT = 100000;
+    const PAGE_RETRY_DELAY = 30000;
+    const MAX_PAGE_FAILS = 3;
     let currentPage = 1;
     console.log("Scraping product listings:");
-    while(currentPage <= TOTAL_PAGES) {
+    while(currentPage <= totalPages) {
         const searchUrl = `https://www.popmart.com/us/search/LABUBU?page=${currentPage}`;
         console.log(`→ Scraping page ${currentPage}...`);
 
         try {
+            // FIXME: if the page loads but returns nothing (delayed) --> count that as possible high traffic
             await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: PAGE_WAIT_TIMEOUT });
-            pageFails = 0; // reset fail count on success
         } catch (e) {
             pageFails++;
             console.error(`❌ Error on page ${currentPage}: ${e.message}`);
