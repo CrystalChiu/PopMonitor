@@ -54,17 +54,28 @@ async function monitor(CHANNEL_ID) {
     let isHotTime = HOT_DAYS.includes(curDay) &&
                       curHour >= HOT_HOURS_RANGE.start &&
                       curHour < HOT_HOURS_RANGE.end;
-    let CHECK_INTERVAL;
+    let CHECK_INTERVAL; // sleep time for the bot
     if(isHotTime) {
       console.log("Bot running in throttle mode");
       CHECK_INTERVAL = CHECK_INTERVAL_PEAK;
-    } else if (HOT_DAYS.includes(curDay) && Math.abs(curHour - HOT_HOURS_RANGE.start <= 2) || Math.abs(HOT_HOURS_RANGE.end - curHour <= 2)) {
-      console.log("Bot running in standby mode");
-      CHECK_INTERVAL = CHECK_INTERVAL_OFF_PEAK;
     } else {
-      console.log("Bot running in snooze mode");
-      CHECK_INTERVAL = CHECK_INTERVAL_SNOOZE;
+      let possibleRestockDay = HOT_DAYS.includes(curDay);
+      let timeToHotTimeStart = curHour - HOT_HOURS_RANGE.start;
+      let timeToHotTimeEnd = HOT_HOURS_RANGE.end - curHour;
+
+      if (possibleRestockDay && Math.abs(timeToHotTimeStart <= CHECK_INTERVAL_OFF_PEAK)) {
+        // make sure we don't sleep through throttle mode start time
+        console.log(`Bot running in preparation mode. ${timeToHotTimeStart}ms until potential restock time`);
+        CHECK_INTERVAL = timeToHotTimeStart;
+      } else if (possibleRestockDay && Math.abs(timeToHotTimeStart <= 2) || Math.abs(timeToHotTimeEnd <= 2)) {
+        console.log("Bot running in standby mode");
+        CHECK_INTERVAL = CHECK_INTERVAL_OFF_PEAK;
+      } else {
+        console.log("Bot running in snooze mode");
+        CHECK_INTERVAL = CHECK_INTERVAL_SNOOZE;
+      }
     }
+    //we should also be checking more frequently if we see restocks happening currently
 
     try {
       let alertProducts = [];
@@ -89,7 +100,7 @@ async function monitor(CHANNEL_ID) {
       } else if (e instanceof HighTrafficError) {
         // probable restock in progress, warn users and sleep
         await sendTrafficAlert(CHANNEL_ID);
-        const sleepTime = 900000; // 15 min
+        const sleepTime = 1800000; // 30 min
         console.log(`High Traffic - retrying in ${sleepTime / 1000}s...`);
         await new Promise(resolve => setTimeout(resolve, sleepTime));
       } else {
