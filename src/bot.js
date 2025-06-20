@@ -87,6 +87,7 @@ async function monitor(CHANNEL_ID) {
       }
 
       consecutiveFailures = 0; // reset after successful scrape
+      console.log(`sending alerts for ${alertProducts.length}`);
 
       // send alert for each changed/new/restocked product
       for (const [product, changeType, imgUrl] of alertProducts) {

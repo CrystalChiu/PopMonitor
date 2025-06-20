@@ -2,6 +2,7 @@ const puppeteer = require('puppeteer');
 const Product = require("./database/models/Products");
 const PageError = require('./errors/PageError');
 const HighTrafficError = require('./errors/HighTrafficError');
+const { BASE_URL } = require("./config");
 
 // ENUM for changes that create an alert
 const ChangeTypeAlert = Object.freeze({
@@ -19,6 +20,7 @@ let changedProductsMap = {};
 let pageFails = 0;
 let firstPageRetries = 0;
 let cache = false;
+let currentPage = 1;
 
 const buildBulkOps = (productsMap) => {
     return Object.values(productsMap).map((product) => ({
@@ -174,9 +176,7 @@ async function checkProducts() {
 
     const browser = await puppeteer.launch({ headless: true });
     const page = await browser.newPage();
-    let failedLoads = 0;
 
-    // TODO: add cache logic
     if(!cache) {
         const allProducts = await Product.find(); // retrieve the current product stock state
         console.log(`Found ${allProducts.length} existing products in the database`);
@@ -224,10 +224,15 @@ async function checkProducts() {
                     let productId = item.id;
                     let product = allProductsMap[productId];
                     let inStock = item.skus[0].stock.onlineStock == 0 ? false : true;
+                    let isPopNow = item.type === "secret" ? true : false;
+    
                     // let subTitle = item.subTitle; // (LABUBU, SKULLPANDA) use for scaling up to include more lines
 
-                    let productSlug = slugifyTitle(name);
-                    let productUrl = `https://www.popmart.com/us/products/${productId}/${productSlug}`;
+                    const productSlug = slugifyTitle(name);
+                    const defaultProductUrl = `https://www.popmart.com/us/products/${productId}/${productSlug}`;
+                    const searchUrl = `${BASE_URL}${currentPage}`;
+                    // we cannot rebuild the url for popnow links, let the user find it quicker from search page
+                    let productUrl = isPopNow === false ? defaultProductUrl : searchUrl;
 
                     // func to update product fields and track changes
                     const updateField = (field, newValue) => {
@@ -237,7 +242,7 @@ async function checkProducts() {
                             changedProductsMap[product.product_id] = product;
 
                             if(field == "price" || field == "url") {
-                                alertProducts.push(product, ChangeTypeAlert.OTHER, imgUrl);
+                                alertProducts.push([product, ChangeTypeAlert.OTHER, imgUrl]);
                             }
                         }
                     };
@@ -282,10 +287,9 @@ async function checkProducts() {
     const PAGE_WAIT_TIMEOUT = 100000;
     const PAGE_RETRY_DELAY = 30000;
     const MAX_PAGE_FAILS = 3;
-    let currentPage = 1;
     console.log("Scraping product listings:");
     while(currentPage <= totalPages) {
-        const searchUrl = `https://www.popmart.com/us/search/LABUBU?page=${currentPage}`;
+        const searchUrl = `${BASE_URL}${currentPage}`;
         console.log(`→ Scraping page ${currentPage}...`);
 
         try {
