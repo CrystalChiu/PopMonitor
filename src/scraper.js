@@ -20,6 +20,30 @@ let pageFails = 0;
 let firstPageRetries = 0;
 let cache = false;
 let currentPage = 1;
+let sharedBrowser;
+
+// pool browsers, sends browser instance
+async function getBrowser() {
+  if (!sharedBrowser) {
+    sharedBrowser = await puppeteer.launch({ 
+        headless: false,
+        args: [
+            '--disable-gpu',
+            '--disable-dev-shm-usage',
+            '--disable-setuid-sandbox',
+            '--no-sandbox',
+            '--no-zygote',
+            '--disable-accelerated-2d-canvas',
+            '--disable-features=site-per-process',
+            '--disable-infobars',
+            '--window-size=1920,1080',
+          ],
+          defaultViewport: null,
+    });
+  }
+
+  return sharedBrowser;
+}
 
 const buildBulkOps = (productsMap) => {
     return Object.values(productsMap).map((product) => ({
@@ -74,21 +98,7 @@ async function checkHotProducts() {
     let PAGE_WAIT_TIMEOUT = 100000;
     scraperInit();
   
-    const browser = await puppeteer.launch({ 
-        headless: false,
-        args: [
-            '--disable-gpu',
-            '--disable-dev-shm-usage',
-            '--disable-setuid-sandbox',
-            '--no-sandbox',
-            '--no-zygote',
-            '--disable-accelerated-2d-canvas',
-            '--disable-features=site-per-process',
-            '--disable-infobars',
-            '--window-size=1920,1080',
-          ],
-          defaultViewport: null,
-    });
+    const browser = await getBrowser();
     const page = await browser.newPage();
 
     await page.setRequestInterception(true);
@@ -188,21 +198,7 @@ async function checkProducts() {
     scraperInit();
     let totalPages = 1;
 
-    const browser = await puppeteer.launch({ 
-        headless: false,
-        args: [
-            '--disable-gpu',
-            '--disable-dev-shm-usage',
-            '--disable-setuid-sandbox',
-            '--no-sandbox',
-            '--no-zygote',
-            '--disable-accelerated-2d-canvas',
-            '--disable-features=site-per-process',
-            '--disable-infobars',
-            '--window-size=1920,1080',
-          ],
-          defaultViewport: null, 
-    });
+    const browser = await getBrowser();
     const page = await browser.newPage();
 
     if(!cache) {
