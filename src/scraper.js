@@ -13,7 +13,6 @@ const ChangeTypeAlert = Object.freeze({
 });
 
 const FAIL_THRESHOLD = 0.5; // 50% failure rate
-let totalPages = 1;
 let allProductsMap = {};
 let alertProducts = []; // stores pairs of (product, changeTypes) that will become alerts
 let changedProductsMap = {};
@@ -75,7 +74,21 @@ async function checkHotProducts() {
     let PAGE_WAIT_TIMEOUT = 100000;
     scraperInit();
   
-    const browser = await puppeteer.launch({ headless: true });
+    const browser = await puppeteer.launch({ 
+        headless: false,
+        args: [
+            '--disable-gpu',
+            '--disable-dev-shm-usage',
+            '--disable-setuid-sandbox',
+            '--no-sandbox',
+            '--no-zygote',
+            '--disable-accelerated-2d-canvas',
+            '--disable-features=site-per-process',
+            '--disable-infobars',
+            '--window-size=1920,1080',
+          ],
+          defaultViewport: null,
+    });
     const page = await browser.newPage();
 
     await page.setRequestInterception(true);
@@ -173,8 +186,23 @@ async function checkHotProducts() {
   
 async function checkProducts() {
     scraperInit();
+    let totalPages = 1;
 
-    const browser = await puppeteer.launch({ headless: true });
+    const browser = await puppeteer.launch({ 
+        headless: false,
+        args: [
+            '--disable-gpu',
+            '--disable-dev-shm-usage',
+            '--disable-setuid-sandbox',
+            '--no-sandbox',
+            '--no-zygote',
+            '--disable-accelerated-2d-canvas',
+            '--disable-features=site-per-process',
+            '--disable-infobars',
+            '--window-size=1920,1080',
+          ],
+          defaultViewport: null, 
+    });
     const page = await browser.newPage();
 
     if(!cache) {
@@ -197,90 +225,95 @@ async function checkProducts() {
         if (blocked.some(domain => request.url().includes(domain))) {
             return request.abort();
         }
+
         request.continue();
     });
 
     page.on('response', async (response) => {
+        // filtering irrelevant requests
+        const request = response.request();
         const url = response.url();
-        const contentType = response.headers()['content-type'] || '';
-      
-        if (!contentType.includes('application/json')) return;
-      
-        try {
-            const json = await response.json();
+        const method = request.method(); // <----- NEW: get the request method
+        const contentType = response.headers()["content-type"] || "";
+
+        if (
+            url.includes('/shop/v1/search') &&
+            contentType.includes('application/json')
+        ) {
+            try {
+                const json = await response.json();
+        
+                if (
+                    json?.code === 'OK' &&
+                    json?.data?.total &&
+                    Array.isArray(json?.data?.list)
+                ) {
+                    totalPages = Math.ceil(json.data.total / json.data.pageSize);
+              
+                    json.data.list.forEach((item, index) => {
+                        let name = item.title;
+                        let rawPrice = item.skus[0].price;
+                        let imgUrl = item.bannerImages[0];
+                        let productId = item.id;
+                        let product = allProductsMap[productId];
+                        let inStock = item.skus[0].stock.onlineStock == 0 ? false : true;
+                        let isPopNow = item.type === "secret" ? true : false;
+                        // let subTitle = item.subTitle; // (LABUBU, SKULLPANDA) use for scaling up to include more lines
     
-            if (
-                url.includes('search') &&
-                json?.code === 'OK' &&
-                json?.data?.total &&
-                Array.isArray(json?.data?.list)
-            ) {
-                totalPages = Math.ceil(json.data.total / json.data.pageSize);
-          
-                json.data.list.forEach((item, index) => {
-                    let name = item.title;
-                    let rawPrice = item.skus[0].price;
-                    let imgUrl = item.bannerImages[0];
-                    let productId = item.id;
-                    let product = allProductsMap[productId];
-                    let inStock = item.skus[0].stock.onlineStock == 0 ? false : true;
-                    let isPopNow = item.type === "secret" ? true : false;
+                        const productSlug = slugifyTitle(name);
+                        const defaultProductUrl = `https://www.popmart.com/us/products/${productId}/${productSlug}`;
+                        const searchUrl = `${BASE_URL}${currentPage}`;
+                        // we cannot rebuild the url for popnow links, let the user find it quicker from search page
+                        let productUrl = isPopNow === false ? defaultProductUrl : searchUrl;
     
-                    // let subTitle = item.subTitle; // (LABUBU, SKULLPANDA) use for scaling up to include more lines
-
-                    const productSlug = slugifyTitle(name);
-                    const defaultProductUrl = `https://www.popmart.com/us/products/${productId}/${productSlug}`;
-                    const searchUrl = `${BASE_URL}${currentPage}`;
-                    // we cannot rebuild the url for popnow links, let the user find it quicker from search page
-                    let productUrl = isPopNow === false ? defaultProductUrl : searchUrl;
-
-                    // func to update product fields and track changes
-                    const updateField = (field, newValue) => {
-                        if (product[field] !== newValue) {
-                            console.log(`Updated ${field} for ${name} from ${product[field]} to ${newValue}`);
-                            product[field] = newValue;
-                            changedProductsMap[product.product_id] = product;
-
-                            if(field == "price" || field == "url") {
-                                alertProducts.push([product, ChangeTypeAlert.OTHER, imgUrl]);
+                        // func to update product fields and track changes
+                        const updateField = (field, newValue) => {
+                            if (product[field] !== newValue) {
+                                console.log(`Updated ${field} for ${name} from ${product[field]} to ${newValue}`);
+                                product[field] = newValue;
+                                changedProductsMap[product.product_id] = product;
+    
+                                if(field == "price" || field == "url") {
+                                    alertProducts.push([product, ChangeTypeAlert.OTHER, imgUrl]);
+                                }
                             }
-                        }
-                    };
-
-                    // keep track of database changes that need to be made based on scraped data
-                    try {
-                        if (!product) {
-                            // new item identified
-                            let newProduct = new Product({
-                                product_id: productId,
-                                name,
-                                price: rawPrice,
-                                in_stock: inStock,
-                                url: productUrl,
-                            });
-                        
-                            alertProducts.push([newProduct, ChangeTypeAlert.NEW_ITEM, imgUrl])
-                            changedProductsMap[productId] = newProduct;
-                            console.log("Added new product:", name);
-                        } else {
-                            // restock detected
-                            if (inStock && !product.in_stock) {
-                                alertProducts.push([product, ChangeTypeAlert.RESTOCK, imgUrl]);
-                                updateField("in_stock", inStock);
-                                console.log("Restock detected: ", name);
+                        };
+    
+                        // keep track of database changes that need to be made based on scraped data
+                        try {
+                            if (!product) {
+                                // new item identified
+                                let newProduct = new Product({
+                                    product_id: productId,
+                                    name,
+                                    price: rawPrice,
+                                    in_stock: inStock,
+                                    url: productUrl,
+                                });
+                            
+                                alertProducts.push([newProduct, ChangeTypeAlert.NEW_ITEM, imgUrl])
+                                changedProductsMap[productId] = newProduct;
+                                console.log("Added new product:", name);
+                            } else {
+                                // restock detected
+                                if (inStock && !product.in_stock) {
+                                    alertProducts.push([product, ChangeTypeAlert.RESTOCK, imgUrl]);
+                                    updateField("in_stock", inStock);
+                                    console.log("Restock detected: ", name);
+                                }
+                            
+                                // handle other product detail changes
+                                updateField("price", rawPrice);
+                                updateField("url", productUrl);
                             }
-                        
-                            // handle other product detail changes
-                            updateField("price", rawPrice);
-                            updateField("url", productUrl);
+                        } catch (err) {
+                            console.error(`❌ Error processing ${name}: ${err.message}`);
                         }
-                    } catch (err) {
-                        console.error(`❌ Error processing ${name}: ${err.message}`);
-                    }
-                });
-              }
-        } catch (e) {
-            console.error(`Failed to parse JSON from ${url}: ${e.message}`);
+                    });
+                }
+            } catch (e) {
+                console.error(`Failed to parse JSON from ${url}: ${e.message}`);
+            }
         }
     });
 
