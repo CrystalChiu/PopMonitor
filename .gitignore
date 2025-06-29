@@ -1,3 +1,5 @@
 node_modules
 .env
 src/config.js
+src/scraper/scraper-utils.js
+src/scraper/scraper-config.js
