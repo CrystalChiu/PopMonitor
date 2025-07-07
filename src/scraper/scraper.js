@@ -38,7 +38,7 @@ async function getBrowser() {
       defaultViewport: null,
     });
   }
-  return sharedBrowser;git
+  return sharedBrowser;
 }
 
 function slugifyTitle(title) {
@@ -233,6 +233,10 @@ async function checkProducts() {
 
             try {
               if (!product) {
+                // skip special items (gifts with purchase, etc)
+                if(!productId || !name || !rawPrice || !inStock || !productUrl)
+                  continue;
+
                 const newProduct = new Product({
                   product_id: productId,
                   name,
@@ -240,6 +244,7 @@ async function checkProducts() {
                   in_stock: inStock,
                   url: productUrl,
                 });
+                
                 state.changedProductsMap[productId] = newProduct;
                 state.alertProducts.push([newProduct, ChangeTypeAlert.NEW_ITEM, imgUrl]);
                 console.log("Added new product:", name);
@@ -299,7 +304,9 @@ async function checkProducts() {
     currentPage++;
   }
 
+  await page.close();
   await browser.close();
+  sharedBrowser = null; // dont leave it in case it times out
   await updateDb(state);
   return state.alertProducts;
 }

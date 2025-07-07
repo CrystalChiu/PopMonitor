@@ -83,10 +83,8 @@ function getInterval(now) {
 
 async function monitor({ channelId, mode }) {
 	while (true) {
-		let now = new Date();
-
 		// determine what mode to run scraper in
-		const { interval: CHECK_INTERVAL, mode: runMode } = getInterval(now);
+		const { interval: CHECK_INTERVAL, mode: runMode } = getInterval(new Date());
 		console.log(`Bot running in ${runMode} mode`);
 
 		try {
@@ -123,14 +121,20 @@ async function monitor({ channelId, mode }) {
 
 			// alert admin of bot death
 			if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
-				await sendAlert({
-					name: "Monitor Error",
-					url: "https://www.popmart.com/us/",
-					price: 0,
-					in_stock: false
-				}, "error", TEST_CHANNEL_ID);
+				try {
+					const channel = await getChannel(TEST_CHANNEL_ID);
+					const embed = {
+						errorMessage: "Too many consecutive issues",
+						timestamp: new Date(),
+					}
 
-				throw new Error("🚨 Too many consecutive failures. Exiting monitor.");
+					await channel.send({
+						content: "Monitor Error -- Stopping Bot",
+						embeds: [embed],
+					});
+				} finally {
+					throw new Error("🚨 Too many consecutive failures. Exiting monitor.");
+				}
 			}
 
 			const RETRY_DELAY = 10_000; // retry after 10s
