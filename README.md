@@ -19,8 +19,29 @@ This is a lightweight and performant web scraper designed to track product resto
 - Built with Node.js
 - We have bypassed the need for Chromium or Pupeteer Stealth in this version!
 
-## Additional Comments:
-- The discord link will be publically available soon!
-- Anticipating expanding to Skullpanda next
-- Thank you for your support and interest in this project, PopMart Friends <3
-- Resellers stay away.
+## Previews
+
+*Restock Alerts*
+<img width="713" height="513" alt="Screenshot 2026-04-05 at 6 37 30 PM" src="https://github.com/user-attachments/assets/86c7cedc-131e-4b0b-8855-70d980f403ef" />
+
+*Manual Fallbacks*
+During high traffic, if PopMonitor cannot get through to the website, it will warn users that a restock is likely happening.
+<img width="504" height="166" alt="Screenshot 2026-04-05 at 6 37 36 PM" src="https://github.com/user-attachments/assets/57b199c9-27cf-4d09-aa87-387b29db2d49" />
+
+*Out of Stock Alerts*
+<img width="577" height="465" alt="Screenshot 2026-04-05 at 6 43 06 PM" src="https://github.com/user-attachments/assets/6d367bd8-628a-411b-9456-66b17ea9d752" />
+
+*New Product Detection*
+<img width="456" height="448" alt="Screenshot 2026-04-05 at 6 43 42 PM" src="https://github.com/user-attachments/assets/17e7f03b-f747-4d93-a8a4-4e232a7cc193" />
+
+The bot also detects price changes and other modifications! 
+
+## Project Status & Notes
+
+PopMonitor was built to monitor real-time product availability during a period of extremely high demand for Labubu releases. The system successfully detected stock changes and notified users as intended during peak usage.
+
+But, as demand increased, Popmart introduced additional anti-bot measures, including blocking major cloud IP ranges (such as its host EC2 instance) and later disabling headless browser access. While the monitor continued to function on residential hardware (Raspberry Pi), these constraints limited reliable deployment options without moving toward more aggressive or intrusive techniques. At that point, I chose to discontinue the project rather than escalate evasion methods.
+
+Thank you to everyone who supported and followed the project. Feel free to contact me if you'd like to discuss the project or any potential future ideas!
+
+- Crystal
